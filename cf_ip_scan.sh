@@ -130,7 +130,7 @@ https_one() {
     if [ "$TEST_PORT" = "443" ]; then
       if grep -qi 'sent to HTTPS port' <<<"$body"; then code=400; else code=000; fi
     else
-      if grep -qi '1003' <<<"$body"; then code=1003; else code=000; fi
+      if grep -qiE 'error code: ?1003|error 1003' <<<"$body" && [ "$code" = "403" ]; then code=1003; else code=000; fi
     fi
   else
     out=$(curl -s -o /dev/null --resolve "${DOMAIN}:443:${ip}" --connect-timeout 4 --max-time "$CURL_TIMEOUT" \
