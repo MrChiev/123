@@ -41,7 +41,7 @@ for cmd in curl timeout xargs awk split shuf; do
 done
 
 if [ "$TEST_MODE" = "ping" ] && ! command -v ping >/dev/null 2>&1; then
-  echo "ping not found. Run: pkg install -y iputils"; exit 1
+  echo "ping not found. Run: pkg install -y inetutils"; exit 1
 fi
 
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock   # keep CPU awake while scanning
