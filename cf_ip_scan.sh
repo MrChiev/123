@@ -7,7 +7,8 @@
 # ======================== SETTINGS ========================
 DOMAIN='proxy.angkor.pp.ua'          # Cloudflare-proxied hostname (SNI + Host)
 TEST_PATH='/'                        # tip: set to your XRAY_WS_PATH, then HTTP 400 = reaches Xray
-TEST_MODE='1003'                     # '1003'   = request https://IP/ directly; an IP counts as good ONLY if
+TEST_MODE='ping'                     # 'ping'   = ICMP ping only (alive + latency; does NOT prove web/443 works)
+                                     # '1003'   = request https://IP/ directly; an IP counts as good ONLY if
                                      #            Cloudflare answers "error code: 1003" (direct IP access blocked)
                                      # 'domain' = original test through your domain (any HTTP reply counts)
 TEST_PORT=80                         # bare-IP mode only (plain HTTP, no TLS, no path):
@@ -39,12 +40,18 @@ for cmd in curl timeout xargs awk split shuf; do
     echo "Missing '$cmd'. Run: pkg install -y curl coreutils findutils gawk"; exit 1; }
 done
 
+if [ "$TEST_MODE" = "ping" ] && ! command -v ping >/dev/null 2>&1; then
+  echo "ping not found. Run: pkg install -y iputils"; exit 1
+fi
+
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock   # keep CPU awake while scanning
 
 C_CYAN=$'\e[36m'; C_YEL=$'\e[33m'; C_GRN=$'\e[32m'; C_RED=$'\e[31m'; C_OFF=$'\e[0m'
 
 echo "${C_CYAN}====================================================="
-if [ "$TEST_MODE" = "1003" ]; then
+if [ "$TEST_MODE" = "ping" ]; then
+  echo "  Cloudflare IP Scanner  (ping mode: ICMP only)"
+elif [ "$TEST_MODE" = "1003" ]; then
   echo "  Cloudflare IP Scanner  (no domain needed: looking for error 1003)"
 else
   echo "  Cloudflare IP Scanner  (domain: $DOMAIN)"
@@ -84,7 +91,13 @@ all_subnets() {
 expand_subnets() { awk '{for(i=1;i<=254;i++) print $0"."i}'; }
 
 # ---------- TCP probe ----------
-tcp_one() { timeout "$TCP_TIMEOUT" bash -c "exec 3<>/dev/tcp/$1/$SWEEP_PORT" 2>/dev/null && echo "$1"; }
+tcp_one() {
+  if [ "$TEST_MODE" = "ping" ]; then
+    ping -c 1 -W 1 "$1" >/dev/null 2>&1 && echo "$1"
+  else
+    timeout "$TCP_TIMEOUT" bash -c "exec 3<>/dev/tcp/$1/$SWEEP_PORT" 2>/dev/null && echo "$1"
+  fi
+}
 
 # $1 = file with IPs, $2 = label, $3 = output file (open IPs, canaries excluded)
 sweep_tcp() {
@@ -120,6 +133,16 @@ sweep_tcp() {
 # ---------- Real HTTPS test (curl with SNI, through the chosen IP) ----------
 https_one() {
   local ip=$1 out body meta code tls tot
+  if [ "$TEST_MODE" = "ping" ]; then
+    # 3 pings; the result is the average round-trip time. HTTP column shows ICMP.
+    out=$(ping -c 3 -W 2 -q "$ip" 2>/dev/null | awk -F'/' '/^(rtt|round-trip)/{print $5}')
+    if [ -n "$out" ]; then
+      awk -v ip="$ip" -v r="$out" 'BEGIN{printf "%s,ICMP,0,%d\n", ip, r}'
+    else
+      echo "$ip,000,0,0"
+    fi
+    return
+  fi
   if [ "$TEST_MODE" = "1003" ]; then
     local scheme=http   # always plain HTTP, even on 443 (Cloudflare answers 400 "plain HTTP request was sent to HTTPS port")
     out=$(curl -sk --connect-timeout 4 --max-time "$CURL_TIMEOUT" \
@@ -165,6 +188,7 @@ async def main():
 asyncio.run(main())
 PYEOF
 fi
+if [ "$TEST_MODE" = "ping" ]; then HAVE_PY=0; TCP_PAR=150; TCP_BATCH=600; fi
 export -f tcp_one https_one
 export DOMAIN TEST_PATH TEST_MODE TEST_PORT SWEEP_PORT TCP_TIMEOUT CURL_TIMEOUT
 
